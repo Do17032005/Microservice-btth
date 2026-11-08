@@ -1,0 +1,136 @@
+version: '3.8'
+
+services:
+  # =========================================================================
+  # 1. HẠ TẦNG DỮ LIỆU & CACHE & MESSAGE BROKER
+  # =========================================================================
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: rhl-postgres
+    environment:
+      POSTGRES_DB: htdxvgh
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./rhl/src/main/resources/schema.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - rhl-network
+
+  # Redis Cache & Geolocation Storage (Session 11)
+  redis:
+    image: redis:7-alpine
+    container_name: rhl-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - rhl-network
+
+  # Kafka Broker & Zookeeper (Session 10)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: rhl-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - rhl-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: rhl-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - rhl-network
+
+  # =========================================================================
+  # 2. HẠ TẦNG MICROSERVICES (SPRING CLOUD)
+  # =========================================================================
+
+  # Eureka Service Discovery (Session 04)
+  eureka-server:
+    build:
+      context: ./eureka-server
+      dockerfile: Dockerfile
+    container_name: rhl-eureka-server
+    ports:
+      - "8761:8761"
+    networks:
+      - rhl-network
+
+  # API Gateway (Session 05, 06)
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: rhl-api-gateway
+    ports:
+      - "8000:8000"
+    depends_on:
+      - eureka-server
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
+    networks:
+      - rhl-network
+
+  # Trip Core Service (Session 01 - 03, 07, 10, 11, 13 - 15)
+  trip-service:
+    build:
+      context: ./rhl
+      dockerfile: Dockerfile
+    container_name: rhl-trip-service
+    ports:
+      - "8081:8081"
+    depends_on:
+      - eureka-server
+      - postgres
+      - redis
+      - kafka
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/htdxvgh
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    networks:
+      - rhl-network
+
+  # Payment & Wallet Service (Session 07 - OpenFeign, Session 10 - Events)
+  payment-service:
+    build:
+      context: ./payment-service
+      dockerfile: Dockerfile
+    container_name: rhl-payment-service
+    ports:
+      - "8083:8083"
+    depends_on:
+      - eureka-server
+      - postgres
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/htdxvgh
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+    networks:
+      - rhl-network
+
+networks:
+  rhl-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

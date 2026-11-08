@@ -1,0 +1,13 @@
+{
+  "name": "rhl-web-ui",
+  "version": "2.0.0",
+  "description": "Interactive Web UI for Realtime Ride-Hailing & Logistics Platform (SRS-RHL-002)",
+  "scripts": {
+    "start": "npx serve -l 3000 .",
+    "dev": "npx serve -l 3000 ."
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "serve": "^14.2.4"
+  }
+}

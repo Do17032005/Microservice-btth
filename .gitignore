@@ -1,0 +1,29 @@
+# Java/Maven build output
+**/target/
+**/build/
+
+# Node.js
+**/node_modules/
+**/dist/
+**/.vite/
+
+# IDE and OS files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+**/application-local.properties
+**/application-local.yml
+**/application-local.yaml
+*.pem
+*.key
+
+# Logs and temporary files
+*.log
+*.tmp

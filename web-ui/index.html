@@ -1,0 +1,1258 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RHL Platform WebUI - SRS-RHL-002 v2.0</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React 18 & Babel Standalone for Instant Execution -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Leaflet CSS & JS for Interactive Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap');
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    #map-container { height: 100%; width: 100%; border-radius: 0.75rem; z-index: 10; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-900 antialiased min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Format VND Currency
+    const formatVND = (num) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(num || 0);
+
+    // Status Badge Component
+    function StateBadge({ status, type = 'trip' }) {
+      const getStyle = () => {
+        switch (status) {
+          case 'CREATED': return 'bg-blue-100 text-blue-800 border-blue-200';
+          case 'MATCHING': return 'bg-amber-100 text-amber-800 border-amber-200 animate-pulse';
+          case 'ACCEPTED': return 'bg-indigo-100 text-indigo-800 border-indigo-200';
+          case 'PICKING_UP': return 'bg-purple-100 text-purple-800 border-purple-200';
+          case 'ARRIVED': return 'bg-teal-100 text-teal-800 border-teal-200';
+          case 'IN_TRIP': return 'bg-emerald-100 text-emerald-800 border-emerald-200 font-bold';
+          case 'COMPLETED': return 'bg-green-100 text-green-800 border-green-200';
+          case 'CANCELLED': return 'bg-rose-100 text-rose-800 border-rose-200';
+          case 'AVAILABLE': return 'bg-emerald-100 text-emerald-700 border-emerald-300';
+          case 'OFFLINE': return 'bg-slate-100 text-slate-600 border-slate-300';
+          case 'OFFERED': return 'bg-amber-100 text-amber-700 border-amber-300 animate-bounce';
+          case 'BUSY': return 'bg-rose-100 text-rose-700 border-rose-300';
+          case 'APPROVED': return 'bg-emerald-100 text-emerald-700 border-emerald-300';
+          case 'PENDING_REVIEW': return 'bg-yellow-100 text-yellow-700 border-yellow-300';
+          case 'REJECTED': return 'bg-rose-100 text-rose-700 border-rose-300';
+          default: return 'bg-slate-100 text-slate-700 border-slate-200';
+        }
+      };
+
+      return (
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${getStyle()}`}>
+          <span className="w-1.5 h-1.5 rounded-full mr-1.5 bg-current opacity-70"></span>
+          {status}
+        </span>
+      );
+    }
+
+    // Interactive Leaflet Map Component
+    function LeafletMap({ pickupCoords, dropoffCoords, driverCoords, inTrip }) {
+      const mapRef = useRef(null);
+      const markersRef = useRef({});
+
+      useEffect(() => {
+        if (!mapRef.current) {
+          const map = L.map('map-container').setView([21.0285, 105.8542], 13);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+          }).addTo(map);
+          mapRef.current = map;
+        }
+
+        const map = mapRef.current;
+
+        // Clear existing markers & polylines
+        if (markersRef.current.pickup) map.removeLayer(markersRef.current.pickup);
+        if (markersRef.current.dropoff) map.removeLayer(markersRef.current.dropoff);
+        if (markersRef.current.driver) map.removeLayer(markersRef.current.driver);
+        if (markersRef.current.route) map.removeLayer(markersRef.current.route);
+
+        if (pickupCoords) {
+          const pickupIcon = L.divIcon({
+            className: 'custom-pin',
+            html: '<div style="background:#10b981; color:white; width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:12px; border:2px solid white; box-shadow:0 2px 6px rgba(0,0,0,0.3);">A</div>'
+          });
+          markersRef.current.pickup = L.marker([pickupCoords.lat, pickupCoords.lng], { icon: pickupIcon })
+            .addTo(map)
+            .bindPopup('Điểm đón: 144 Xuân Thủy, Cầu Giấy');
+        }
+
+        if (dropoffCoords) {
+          const dropoffIcon = L.divIcon({
+            className: 'custom-pin',
+            html: '<div style="background:#ef4444; color:white; width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:12px; border:2px solid white; box-shadow:0 2px 6px rgba(0,0,0,0.3);">B</div>'
+          });
+          markersRef.current.dropoff = L.marker([dropoffCoords.lat, dropoffCoords.lng], { icon: dropoffIcon })
+            .addTo(map)
+            .bindPopup('Điểm đến: BV Bạch Mai, Giải Phóng');
+        }
+
+        if (driverCoords) {
+          const driverIcon = L.divIcon({
+            className: 'custom-pin',
+            html: '<div style="background:#eab308; color:black; width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:16px; border:2px solid #0f172a; box-shadow:0 4px 10px rgba(0,0,0,0.4);">🛵</div>'
+          });
+          markersRef.current.driver = L.marker([driverCoords.lat, driverCoords.lng], { icon: driverIcon })
+            .addTo(map)
+            .bindPopup('Tài xế: Trần Văn Mạnh (29B1-888.99)');
+        }
+
+        if (pickupCoords && dropoffCoords) {
+          const latlngs = [
+            [pickupCoords.lat, pickupCoords.lng],
+            [(pickupCoords.lat + dropoffCoords.lat) / 2 + 0.005, (pickupCoords.lng + dropoffCoords.lng) / 2 - 0.005],
+            [dropoffCoords.lat, dropoffCoords.lng]
+          ];
+          markersRef.current.route = L.polyline(latlngs, {
+            color: '#3b82f6',
+            weight: 5,
+            opacity: 0.8,
+            dashArray: '8, 8'
+          }).addTo(map);
+
+          map.fitBounds(markersRef.current.route.getBounds(), { padding: [50, 50] });
+        }
+      }, [pickupCoords, dropoffCoords, driverCoords]);
+
+      return <div id="map-container"></div>;
+    }
+
+    // MAIN APPLICATION COMPONENT
+    function App() {
+      const [currentPortal, setCurrentPortal] = useState('customer'); // 'customer' | 'driver' | 'admin'
+
+      // ==========================================
+      // SHARED SYSTEM STATE (SYNCED ACROSS PORTALS)
+      // ==========================================
+      const [customerState, setCustomerState] = useState({
+        id: 'c101-uuid-cust-001',
+        name: 'Hoàng Hải Đăng',
+        phone: '0988776655'
+      });
+
+      const [driverState, setDriverState] = useState({
+        id: 'drv-uuid-8899',
+        name: 'Trần Văn Mạnh',
+        phone: '0912****88',
+        license: '29-B1 088.99',
+        rating: 4.88,
+        totalTrips: 142,
+        vehiclePlate: '29B1-888.99',
+        vehicleModel: 'Honda Wave Alpha (Đỏ Đen)',
+        availabilityStatus: 'AVAILABLE', // OFFLINE, AVAILABLE, OFFERED, BUSY
+        reviewStatus: 'APPROVED'
+      });
+
+      const [driverWallet, setDriverWallet] = useState({
+        balance: 850000,
+        entries: [
+          {
+            id: 'e-1',
+            desc: 'Cước cuốc RHL-8821 (80% net)',
+            ref: 'RHL-8821',
+            amount: 45600,
+            balanceAfter: 850000,
+            time: '2026-10-14 06:45:12'
+          },
+          {
+            id: 'e-2',
+            desc: 'Chiết khấu sàn RHL-8821 (20% fee)',
+            ref: 'RHL-8821',
+            amount: -11400,
+            balanceAfter: 804400,
+            time: '2026-10-14 06:45:12'
+          }
+        ]
+      });
+
+      // Active Trip State
+      const [activeTrip, setActiveTrip] = useState(null);
+
+      // Quote & Booking Form State
+      const [serviceType, setServiceType] = useState('RIDE_MOTORBIKE');
+      const [pickupAddress, setPickupAddress] = useState('144 Xuân Thủy, Cầu Giấy, Hà Nội');
+      const [dropoffAddress, setDropoffAddress] = useState('Bệnh viện Bạch Mai, Giải Phóng, Hà Nội');
+      const [pickupCoords, setPickupCoords] = useState({ lat: 21.0368, lng: 105.7836 });
+      const [dropoffCoords, setDropoffCoords] = useState({ lat: 20.9995, lng: 105.8423 });
+      const [driverCoords, setDriverCoords] = useState({ lat: 21.0345, lng: 105.7812 });
+
+      // Delivery Specifics
+      const [recipientName, setRecipientName] = useState('Nguyễn Văn B');
+      const [recipientPhone, setRecipientPhone] = useState('0987654321');
+      const [packageDesc, setPackageDesc] = useState('Hồ sơ hợp đồng A4 (0.5kg)');
+      const [deliveryOtp, setDeliveryOtp] = useState('');
+      const [paymentMethod, setPaymentMethod] = useState('E_WALLET_SANDBOX');
+
+      // Fare Quote
+      const [quote, setQuote] = useState(null);
+      const [quoteSeconds, setQuoteSeconds] = useState(300);
+
+      // Driver Offer
+      const [incomingOffer, setIncomingOffer] = useState(null);
+      const [offerSeconds, setOfferSeconds] = useState(15);
+
+      // Customer Rating
+      const [ratingScore, setRatingScore] = useState(5);
+      const [hasRated, setHasRated] = useState(false);
+
+      // Admin State
+      const [auditRecords, setAuditRecords] = useState([
+        {
+          id: 'aud-1',
+          actor: 'admin-sec-01 (ROLE_ADMIN)',
+          action: 'APPROVE_DRIVER_KYC',
+          target: 'DRIVER_PROFILE:drv-uuid-8899',
+          delta: 'reviewStatus: PENDING_REVIEW -> APPROVED',
+          correlationId: 'req-corr-99214',
+          time: '2026-10-14 05:30:11'
+        },
+        {
+          id: 'aud-2',
+          actor: 'system-dispatch (SYSTEM)',
+          action: 'ATOMIC_OFFER_ACCEPTED',
+          target: 'DRIVER_OFFER:off-trip-9021',
+          delta: 'status: OFFERED -> ACCEPTED, driver -> BUSY',
+          correlationId: 'req-corr-99285',
+          time: '2026-10-14 06:15:35'
+        },
+        {
+          id: 'aud-3',
+          actor: 'system-payment (SYSTEM)',
+          action: 'LEDGER_SETTLEMENT',
+          target: 'WALLET:wal-8899',
+          delta: 'balance: 804400 -> 850000 (+45600 VND net)',
+          correlationId: 'req-corr-99341',
+          time: '2026-10-14 06:45:12'
+        }
+      ]);
+
+      // Quote Countdown Timer
+      useEffect(() => {
+        if (!quote) return;
+        const timer = setInterval(() => {
+          setQuoteSeconds((prev) => {
+            if (prev <= 1) {
+              clearInterval(timer);
+              setQuote(null);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+        return () => clearInterval(timer);
+      }, [quote]);
+
+      // Driver Offer Countdown Timer
+      useEffect(() => {
+        if (!incomingOffer) return;
+        const timer = setInterval(() => {
+          setOfferSeconds((prev) => {
+            if (prev <= 1) {
+              clearInterval(timer);
+              setIncomingOffer(null);
+              setDriverState((d) => ({ ...d, availabilityStatus: 'AVAILABLE' }));
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+        return () => clearInterval(timer);
+      }, [incomingOffer]);
+
+      // Actions
+      const handleGetQuote = () => {
+        const distance = 8.5;
+        const duration = 24;
+        const base = serviceType === 'RIDE_MOTORBIKE' ? 12000 : serviceType === 'RIDE_CAR_4' ? 20000 : 25000;
+        const distRate = serviceType === 'RIDE_MOTORBIKE' ? 5000 : 10000;
+        const distFare = (distance - 1) * distRate;
+        const timeFare = duration * (serviceType === 'RIDE_MOTORBIKE' ? 500 : 1000);
+        const surge = 1.2;
+        const total = Math.ceil(((base + distFare + timeFare) * surge) / 1000) * 1000;
+
+        setQuote({
+          id: 'quote-' + Date.now(),
+          distanceKm: distance,
+          durationMinutes: duration,
+          baseFare: base,
+          distanceFare: distFare,
+          timeFare: timeFare,
+          surgeMultiplier: surge,
+          totalFare: total,
+          expiresAt: new Date(Date.now() + 300000).toISOString()
+        });
+        setQuoteSeconds(300);
+      };
+
+      const handleBookTrip = () => {
+        if (!quote) return;
+        const newTrip = {
+          id: 'trip-' + Date.now(),
+          tripCode: 'RHL-' + Math.floor(100000 + Math.random() * 900000),
+          customerId: customerState.id,
+          serviceType,
+          status: 'MATCHING',
+          pickupAddress,
+          dropoffAddress,
+          estimatedFare: quote.totalFare,
+          deliveryOtp: serviceType === 'DELIVERY_MOTORBIKE' ? '4829' : null,
+          createdAt: new Date().toLocaleTimeString()
+        };
+
+        setActiveTrip(newTrip);
+        setQuote(null);
+        setHasRated(false);
+
+        // If driver is available, push offer to driver
+        if (driverState.availabilityStatus === 'AVAILABLE') {
+          setTimeout(() => {
+            const offer = {
+              id: 'off-' + Date.now(),
+              tripId: newTrip.id,
+              serviceType,
+              distanceToPickupKm: 0.8,
+              totalFare: newTrip.estimatedFare,
+              estimatedEarnings: Math.round(newTrip.estimatedFare * 0.8),
+              pickupAddress,
+              dropoffAddress
+            };
+            setIncomingOffer(offer);
+            setOfferSeconds(15);
+            setDriverState((d) => ({ ...d, availabilityStatus: 'OFFERED' }));
+          }, 1500);
+        }
+      };
+
+      const handleAcceptOffer = () => {
+        if (!incomingOffer || !activeTrip) return;
+        setIncomingOffer(null);
+        setDriverState((d) => ({ ...d, availabilityStatus: 'BUSY' }));
+        setActiveTrip((prev) => ({
+          ...prev,
+          status: 'ACCEPTED',
+          driverId: driverState.id,
+          driverName: driverState.name,
+          driverPhone: driverState.phone,
+          vehiclePlate: driverState.vehiclePlate,
+          vehicleModel: driverState.vehicleModel,
+          driverRating: driverState.rating
+        }));
+
+        // Log audit
+        setAuditRecords((prev) => [
+          {
+            id: 'aud-' + Date.now(),
+            actor: `driver:${driverState.id}`,
+            action: 'ACCEPT_DRIVER_OFFER',
+            target: `TRIP:${activeTrip.tripCode}`,
+            delta: 'tripStatus: MATCHING -> ACCEPTED, driver -> BUSY',
+            correlationId: 'req-corr-' + Math.random().toString(36).substring(2, 7),
+            time: new Date().toLocaleTimeString()
+          },
+          ...prev
+        ]);
+      };
+
+      const handleRejectOffer = () => {
+        setIncomingOffer(null);
+        setDriverState((d) => ({ ...d, availabilityStatus: 'AVAILABLE' }));
+      };
+
+      const handleDriverStep = (nextStatus) => {
+        if (!activeTrip) return;
+
+        if (nextStatus === 'COMPLETED' && activeTrip.serviceType === 'DELIVERY_MOTORBIKE' && !deliveryOtp) {
+          alert('Vui lòng nhập mã OTP xác nhận bàn giao hàng từ người nhận (TBD-08)!');
+          return;
+        }
+
+        if (nextStatus === 'COMPLETED') {
+          const fare = activeTrip.estimatedFare;
+          const net = Math.round(fare * 0.8);
+          const fee = fare - net;
+          const newBal = driverWallet.balance + net;
+
+          setDriverWallet((prev) => ({
+            balance: newBal,
+            entries: [
+              {
+                id: 'e-' + Date.now(),
+                desc: `Cước cuốc ${activeTrip.tripCode} (80% net)`,
+                ref: activeTrip.tripCode,
+                amount: net,
+                balanceAfter: newBal,
+                time: new Date().toLocaleTimeString()
+              },
+              ...prev.entries
+            ]
+          }));
+
+          setDriverState((d) => ({
+            ...d,
+            availabilityStatus: 'AVAILABLE',
+            totalTrips: d.totalTrips + 1
+          }));
+
+          setActiveTrip((prev) => ({ ...prev, status: 'COMPLETED' }));
+
+          setAuditRecords((prev) => [
+            {
+              id: 'aud-' + Date.now(),
+              actor: 'system-payment',
+              action: 'LEDGER_SETTLEMENT',
+              target: `WALLET:${driverState.id}`,
+              delta: `credit: +${net} VND, platformFee: ${fee} VND`,
+              correlationId: 'req-corr-' + Math.random().toString(36).substring(2, 7),
+              time: new Date().toLocaleTimeString()
+            },
+            ...prev
+          ]);
+        } else {
+          setActiveTrip((prev) => ({ ...prev, status: nextStatus }));
+        }
+      };
+
+      const handleCancelTrip = () => {
+        if (!activeTrip) return;
+        const feeApplies = activeTrip.status === 'ARRIVED' || activeTrip.status === 'IN_TRIP';
+        const msg = feeApplies
+          ? 'Hủy sau khi tài xế đã tới sẽ áp dụng phí phạt 10.000 VNĐ (TBD-07). Bạn có chắc chắn muốn hủy?'
+          : 'Bạn có chắc chắn muốn hủy chuyến xe này?';
+
+        if (confirm(msg)) {
+          setActiveTrip((prev) => ({
+            ...prev,
+            status: 'CANCELLED',
+            cancellationFee: feeApplies ? 10000 : 0
+          }));
+          setDriverState((d) => ({ ...d, availabilityStatus: 'AVAILABLE' }));
+        }
+      };
+
+      return (
+        <div className="flex flex-col min-h-screen">
+          {/* Main Top Header */}
+          <header className="bg-slate-900 text-white shadow-xl sticky top-0 z-50 border-b border-slate-800">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex items-center justify-between h-16">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center font-black text-xl shadow-lg">
+                    ⚡
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-extrabold text-base tracking-tight">RHL PLATFORM</span>
+                      <span className="text-[10px] bg-blue-500/20 text-blue-300 border border-blue-400/30 px-2 py-0.5 rounded-full font-mono font-bold">
+                        SRS-RHL-002 v2.0
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Ride-Hailing & Logistics Microservices WebUI
+                    </p>
+                  </div>
+                </div>
+
+                {/* Role Switcher */}
+                <div className="flex items-center bg-slate-800 p-1 rounded-xl border border-slate-700">
+                  <button
+                    onClick={() => setCurrentPortal('customer')}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      currentPortal === 'customer'
+                        ? 'bg-blue-600 text-white shadow'
+                        : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <span>👤</span> Khách Hàng
+                  </button>
+                  <button
+                    onClick={() => setCurrentPortal('driver')}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      currentPortal === 'driver'
+                        ? 'bg-amber-600 text-white shadow'
+                        : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <span>🛵</span> Tài Xế Đối Tác
+                  </button>
+                  <button
+                    onClick={() => setCurrentPortal('admin')}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      currentPortal === 'admin'
+                        ? 'bg-purple-600 text-white shadow'
+                        : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <span>🛡️</span> Quản Trị Sàn (Admin)
+                  </button>
+                </div>
+
+                {/* System Microservices Status Pill */}
+                <div className="hidden lg:flex items-center gap-2 bg-slate-800/90 px-3 py-1.5 rounded-xl border border-slate-700 text-[11px] font-mono text-slate-300">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                  <span>Gateway:8000</span>
+                  <span className="text-slate-500">•</span>
+                  <span>WSS Connected</span>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          {/* PORTAL VIEW 1: CUSTOMER APP */}
+          {currentPortal === 'customer' && (
+            <main className="max-w-7xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
+              {/* Left Column: Booking & Quoting Form */}
+              <div className="lg:col-span-5 space-y-5">
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+                  <div className="flex items-center justify-between border-b pb-3">
+                    <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                      <span className="p-1 bg-blue-100 text-blue-600 rounded">📍</span>
+                      Đặt Xe & Giao Hàng Trực Tuyến
+                    </h2>
+                    <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">
+                      Khách: {customerState.name}
+                    </span>
+                  </div>
+
+                  {!activeTrip || activeTrip.status === 'COMPLETED' || activeTrip.status === 'CANCELLED' ? (
+                    <div className="space-y-4">
+                      {/* Service Selector */}
+                      <div>
+                        <label className="text-xs font-semibold text-slate-500 uppercase block mb-1.5">
+                          Chọn Dịch Vụ Vận Chuyển
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            { id: 'RIDE_MOTORBIKE', label: 'Xe Máy', icon: '🛵', desc: '12.000đ mở cửa' },
+                            { id: 'RIDE_CAR_4', label: 'Ô Tô 4 Chỗ', icon: '🚗', desc: '20.000đ mở cửa' },
+                            { id: 'RIDE_CAR_7', label: 'Ô Tô 7 Chỗ', icon: '🚐', desc: '25.000đ mở cửa' },
+                            { id: 'DELIVERY_MOTORBIKE', label: 'Giao Hàng', icon: '📦', desc: 'Kiện < 20kg (OTP)' }
+                          ].map((srv) => (
+                            <button
+                              key={srv.id}
+                              onClick={() => { setServiceType(srv.id); setQuote(null); }}
+                              className={`p-3 rounded-xl border text-left transition-all ${
+                                serviceType === srv.id
+                                  ? 'border-blue-600 bg-blue-50/80 text-blue-900 shadow-sm'
+                                  : 'border-slate-200 hover:border-slate-300 text-slate-700'
+                              }`}
+                            >
+                              <div className="text-xl mb-1">{srv.icon}</div>
+                              <div className="font-bold text-xs">{srv.label}</div>
+                              <div className="text-[10px] text-slate-500">{srv.desc}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Pickup & Dropoff Inputs */}
+                      <div className="space-y-3">
+                        <div>
+                          <label className="text-xs font-medium text-slate-600 block mb-1 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Điểm đón
+                          </label>
+                          <input
+                            type="text"
+                            value={pickupAddress}
+                            onChange={(e) => setPickupAddress(e.target.value)}
+                            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-slate-600 block mb-1 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-rose-500"></span> Điểm đến
+                          </label>
+                          <input
+                            type="text"
+                            value={dropoffAddress}
+                            onChange={(e) => setDropoffAddress(e.target.value)}
+                            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Delivery Specifics */}
+                      {serviceType === 'DELIVERY_MOTORBIKE' && (
+                        <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl space-y-2 text-xs">
+                          <span className="font-bold text-amber-900 block">
+                            📦 Thông tin kiện hàng & người nhận (TBD-08)
+                          </span>
+                          <div className="grid grid-cols-2 gap-2">
+                            <input
+                              type="text"
+                              placeholder="Tên người nhận"
+                              value={recipientName}
+                              onChange={(e) => setRecipientName(e.target.value)}
+                              className="px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg"
+                            />
+                            <input
+                              type="text"
+                              placeholder="SĐT người nhận"
+                              value={recipientPhone}
+                              onChange={(e) => setRecipientPhone(e.target.value)}
+                              className="px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg"
+                            />
+                          </div>
+                          <input
+                            type="text"
+                            placeholder="Mô tả kiện hàng (< 20kg, 50x40x40cm)"
+                            value={packageDesc}
+                            onChange={(e) => setPackageDesc(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg"
+                          />
+                        </div>
+                      )}
+
+                      {/* Payment Method */}
+                      <div>
+                        <label className="text-xs font-semibold text-slate-500 uppercase block mb-1.5">
+                          Hình Thức Thanh Toán
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            onClick={() => setPaymentMethod('E_WALLET_SANDBOX')}
+                            className={`py-2 px-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${
+                              paymentMethod === 'E_WALLET_SANDBOX'
+                                ? 'border-blue-600 bg-blue-50 text-blue-800'
+                                : 'border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            <span>💳</span> Ví Sandbox
+                          </button>
+                          <button
+                            onClick={() => setPaymentMethod('CASH')}
+                            className={`py-2 px-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${
+                              paymentMethod === 'CASH'
+                                ? 'border-blue-600 bg-blue-50 text-blue-800'
+                                : 'border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            <span>💵</span> Tiền Mặt
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Quote Action */}
+                      {!quote ? (
+                        <button
+                          onClick={handleGetQuote}
+                          className="w-full py-3 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold rounded-xl shadow-md text-sm transition-all"
+                        >
+                          XEM BÁO GIÁ TRƯỚC (HIỆU LỰC 5 PHÚT)
+                        </button>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs">
+                            <div className="flex justify-between items-center border-b pb-2">
+                              <span className="font-bold text-slate-700">Báo giá cước ước tính</span>
+                              <span className="font-mono text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded">
+                                TTL: {Math.floor(quoteSeconds / 60)}:{quoteSeconds % 60 < 10 ? '0' : ''}{quoteSeconds % 60}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-slate-600">
+                              <span>Mở cửa (1km đầu):</span>
+                              <strong>{formatVND(quote.baseFare)}</strong>
+                            </div>
+                            <div className="flex justify-between text-slate-600">
+                              <span>Cước khoảng cách ({quote.distanceKm} km):</span>
+                              <strong>{formatVND(quote.distanceFare)}</strong>
+                            </div>
+                            <div className="flex justify-between text-slate-600">
+                              <span>Cước thời gian ({quote.durationMinutes} ph):</span>
+                              <strong>{formatVND(quote.timeFare)}</strong>
+                            </div>
+                            {quote.surgeMultiplier > 1.0 && (
+                              <div className="flex justify-between items-center text-amber-700 bg-amber-50 p-1.5 rounded border border-amber-200">
+                                <span className="font-bold">⚡ Surge Pricing ({quote.surgeMultiplier}x):</span>
+                                <span className="font-extrabold">+{Math.round((quote.surgeMultiplier - 1) * 100)}%</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between items-center pt-2 border-t text-sm">
+                              <span className="font-bold text-slate-900">Tổng cước:</span>
+                              <span className="text-lg font-black text-blue-600">{formatVND(quote.totalFare)}</span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-2">
+                            <button
+                              onClick={() => setQuote(null)}
+                              className="py-2.5 border border-slate-300 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                              Hủy
+                            </button>
+                            <button
+                              onClick={handleBookTrip}
+                              className="col-span-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20"
+                            >
+                              XÁC NHẬN ĐẶT XE (IDEMPOTENT)
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Active Live Tracking Card */
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-200">
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase block">Mã chuyến</span>
+                          <span className="font-mono font-bold text-slate-900">{activeTrip.tripCode}</span>
+                        </div>
+                        <StateBadge status={activeTrip.status} />
+                      </div>
+
+                      {/* Status message */}
+                      <div className="p-3 bg-blue-50 rounded-xl border border-blue-200 text-xs text-blue-800">
+                        {activeTrip.status === 'MATCHING' && '📡 Đang tìm tài xế gần bạn nhất (Vòng 1: 3km - 15s)...'}
+                        {activeTrip.status === 'ACCEPTED' && '✓ Tài xế đã nhận cuốc và chuẩn bị di chuyển!'}
+                        {activeTrip.status === 'PICKING_UP' && '🛵 Tài xế đang trên đường tới điểm đón...'}
+                        {activeTrip.status === 'ARRIVED' && '📍 Tài xế đã tới điểm đón! Quý khách vui lòng ra xe.'}
+                        {activeTrip.status === 'IN_TRIP' && '🚀 Chuyến đi đang diễn ra an toàn.'}
+                      </div>
+
+                      {/* Assigned Driver Card */}
+                      {activeTrip.driverName && (
+                        <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs">
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <span className="text-slate-400 block">Tài xế phục vụ</span>
+                              <strong className="text-slate-900 text-sm">{activeTrip.driverName}</strong>
+                            </div>
+                            <div className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold">
+                              ⭐ {activeTrip.driverRating}
+                            </div>
+                          </div>
+                          <div className="flex justify-between text-slate-600 border-t pt-2">
+                            <span>Biển số xe: <strong className="font-mono text-slate-900">{activeTrip.vehiclePlate}</strong></span>
+                            <span>{activeTrip.vehicleModel}</span>
+                          </div>
+                          <div className="flex justify-between items-center pt-1">
+                            <span className="text-slate-500">Liên hệ bảo mật: {activeTrip.driverPhone}</span>
+                            <a href={`tel:${activeTrip.driverPhone}`} className="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded font-bold">
+                              📞 Gọi điện
+                            </a>
+                          </div>
+
+                          {activeTrip.deliveryOtp && (
+                            <div className="p-2 bg-purple-50 border border-purple-200 rounded text-center mt-2">
+                              <span className="text-[10px] text-purple-700 uppercase font-bold block">
+                                Mã OTP Giao Nhận Hàng (TBD-08)
+                              </span>
+                              <span className="text-xl font-mono font-extrabold text-purple-900 tracking-widest">
+                                {activeTrip.deliveryOtp}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Cancel Button */}
+                      <button
+                        onClick={handleCancelTrip}
+                        className="w-full py-2.5 border border-rose-300 text-rose-700 font-bold rounded-xl text-xs hover:bg-rose-50"
+                      >
+                        HỦY CHUYẾN XE
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Completed Rating Modal */}
+                  {activeTrip && activeTrip.status === 'COMPLETED' && (
+                    <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-3">
+                      <div className="text-center">
+                        <span className="text-2xl">🎉</span>
+                        <h3 className="font-bold text-emerald-900 text-sm mt-1">Chuyến Xe Đã Hoàn Thành!</h3>
+                        <p className="text-xs text-emerald-700">Tổng thanh toán: <strong>{formatVND(activeTrip.estimatedFare)}</strong></p>
+                      </div>
+
+                      {!hasRated ? (
+                        <div className="space-y-2 pt-2 border-t border-emerald-200">
+                          <span className="text-xs font-semibold text-emerald-800 block text-center">
+                            Đánh giá chất lượng phục vụ của tài xế (FR-RAT-001)
+                          </span>
+                          <div className="flex justify-center gap-2">
+                            {[1, 2, 3, 4, 5].map((star) => (
+                              <button
+                                key={star}
+                                onClick={() => setRatingScore(star)}
+                                className={`text-xl transition-transform hover:scale-125 ${
+                                  ratingScore >= star ? 'text-amber-500' : 'text-slate-300'
+                                }`}
+                              >
+                                ★
+                              </button>
+                            ))}
+                          </div>
+                          <button
+                            onClick={() => { setHasRated(true); alert('Cảm ơn bạn đã gửi đánh giá!'); }}
+                            className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold"
+                          >
+                            GỬI ĐÁNH GIÁ ({ratingScore} SAO)
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="p-2 bg-white rounded border border-emerald-200 text-center text-xs font-semibold text-emerald-800">
+                          ✓ Đã ghi nhận đánh giá của bạn
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => setActiveTrip(null)}
+                        className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold"
+                      >
+                        ĐẶT CHUYẾN MỚI
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Interactive Leaflet Map */}
+              <div className="lg:col-span-7">
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 h-[650px] flex flex-col">
+                  <div className="flex justify-between items-center pb-3 border-b">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></span>
+                      <span className="text-sm font-bold text-slate-800">Bản Đồ Định Vị OpenStreetMap & Telemetry WSS</span>
+                    </div>
+                    <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">
+                      Haversine + 1.30x Factor
+                    </span>
+                  </div>
+
+                  <div className="relative flex-1 mt-3">
+                    <LeafletMap
+                      pickupCoords={pickupCoords}
+                      dropoffCoords={dropoffCoords}
+                      driverCoords={activeTrip && activeTrip.driverName ? driverCoords : null}
+                    />
+
+                    {/* Bottom overlay statistics */}
+                    <div className="absolute bottom-4 left-4 right-4 z-20 bg-slate-900/80 backdrop-blur-md p-3 rounded-xl border border-slate-700 text-xs text-slate-300 flex justify-between items-center">
+                      <div className="flex items-center gap-3">
+                        <span className="text-emerald-400 font-mono font-bold">OSRM Engine</span>
+                        <span>Cự ly: <strong>8.5 km</strong></span>
+                        <span>Thời gian ước tính: <strong>24 phút</strong></span>
+                      </div>
+                      <span className="text-[11px] text-slate-400">GPS Ping: 3s</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </main>
+          )}
+
+          {/* PORTAL VIEW 2: DRIVER PARTNER APP */}
+          {currentPortal === 'driver' && (
+            <main className="max-w-7xl w-full mx-auto p-6 space-y-6 flex-1">
+              {/* Top Banner */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl bg-amber-500 text-white font-extrabold flex items-center justify-center text-xl shadow-md">
+                    M
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-lg font-bold text-slate-800">{driverState.name}</h2>
+                      <StateBadge status={driverState.reviewStatus} />
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
+                      <span>Biển số: <strong className="font-mono text-slate-800">{driverState.vehiclePlate}</strong></span>
+                      <span>•</span>
+                      <span>⭐ {driverState.rating} ({driverState.totalTrips} chuyến)</span>
+                      <span>•</span>
+                      <span className="font-mono">ID: {driverState.id}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Availability Switch */}
+                <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-2xl border border-slate-200">
+                  <div className="text-right">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Trạng thái nhận cuốc</span>
+                    <StateBadge status={driverState.availabilityStatus} />
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (driverState.availabilityStatus === 'BUSY') {
+                        alert('Không thể đổi trạng thái khi đang có chuyến!');
+                        return;
+                      }
+                      setDriverState((d) => ({
+                        ...d,
+                        availabilityStatus: d.availabilityStatus === 'AVAILABLE' ? 'OFFLINE' : 'AVAILABLE'
+                      }));
+                    }}
+                    className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm ${
+                      driverState.availabilityStatus === 'AVAILABLE'
+                        ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                        : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                    }`}
+                  >
+                    {driverState.availabilityStatus === 'AVAILABLE' ? 'TẮT OFFLINE' : 'BẬT ONLINE'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Driver Grid: In-Trip Action Machine vs Wallet Dashboard */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-8 space-y-6">
+                  {/* In-Trip Navigation Card */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+                    <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                      <span className="p-1 bg-amber-100 text-amber-700 rounded">🧭</span>
+                      Tiến Trình Chuyến Xe Đang Phục Vụ
+                    </h3>
+
+                    {activeTrip && activeTrip.status !== 'COMPLETED' && activeTrip.status !== 'CANCELLED' ? (
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center p-3 bg-amber-50 rounded-xl border border-amber-200">
+                          <div>
+                            <span className="text-xs text-amber-800 font-semibold block">Mã chuyến xe</span>
+                            <span className="font-mono font-bold text-amber-950 text-base">{activeTrip.tripCode}</span>
+                          </div>
+                          <StateBadge status={activeTrip.status} />
+                        </div>
+
+                        {/* Step Transition Buttons */}
+                        <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                          {['ACCEPTED', 'PICKING_UP', 'ARRIVED', 'IN_TRIP'].map((step, idx) => {
+                            const steps = ['ACCEPTED', 'PICKING_UP', 'ARRIVED', 'IN_TRIP', 'COMPLETED'];
+                            const isCurrent = activeTrip.status === step;
+                            const isDone = steps.indexOf(activeTrip.status) >= idx;
+                            return (
+                              <div
+                                key={step}
+                                className={`p-2.5 rounded-xl border ${
+                                  isCurrent
+                                    ? 'bg-amber-500 text-white font-bold border-amber-600 shadow'
+                                    : isDone
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                    : 'bg-slate-50 text-slate-400'
+                                }`}
+                              >
+                                {step}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Location Details */}
+                        <div className="p-3 bg-slate-50 rounded-xl space-y-1.5 text-xs text-slate-700">
+                          <div><strong>Điểm đón:</strong> {activeTrip.pickupAddress}</div>
+                          <div><strong>Điểm trả:</strong> {activeTrip.dropoffAddress}</div>
+                        </div>
+
+                        {/* Delivery OTP Input if Delivery */}
+                        {activeTrip.serviceType === 'DELIVERY_MOTORBIKE' && activeTrip.status === 'IN_TRIP' && (
+                          <div className="p-3 bg-purple-50 rounded-xl border border-purple-200 space-y-2">
+                            <span className="text-xs font-bold text-purple-900 block">
+                              Xác thực OTP 4 số từ người nhận hàng (TBD-08)
+                            </span>
+                            <input
+                              type="text"
+                              maxLength={4}
+                              placeholder="Nhập 4 số OTP bàn giao hàng..."
+                              value={deliveryOtp}
+                              onChange={(e) => setDeliveryOtp(e.target.value)}
+                              className="w-full text-center font-mono text-sm tracking-widest px-3 py-2 bg-white border border-purple-300 rounded-lg"
+                            />
+                          </div>
+                        )}
+
+                        {/* State Machine Transition Actions */}
+                        <div>
+                          {activeTrip.status === 'ACCEPTED' && (
+                            <button
+                              onClick={() => handleDriverStep('PICKING_UP')}
+                              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs"
+                            >
+                              BẮT ĐẦU ĐI ĐÓN KHÁCH (PICKING_UP)
+                            </button>
+                          )}
+                          {activeTrip.status === 'PICKING_UP' && (
+                            <button
+                              onClick={() => handleDriverStep('ARRIVED')}
+                              className="w-full py-3 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs"
+                            >
+                              TÔI ĐÃ ĐẾN ĐIỂM ĐÓN (ARRIVED)
+                            </button>
+                          )}
+                          {activeTrip.status === 'ARRIVED' && (
+                            <button
+                              onClick={() => handleDriverStep('IN_TRIP')}
+                              className="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs"
+                            >
+                              KHÁCH ĐÃ LÊN XE / BẮT ĐẦU DI CHUYỂN (IN_TRIP)
+                            </button>
+                          )}
+                          {activeTrip.status === 'IN_TRIP' && (
+                            <button
+                              onClick={() => handleDriverStep('COMPLETED')}
+                              className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs"
+                            >
+                              ĐÃ ĐẾN NƠI & HOÀN THÀNH CHUYẾN (COMPLETED)
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-10 text-center text-slate-400 space-y-2">
+                        <span className="text-4xl block">🛵</span>
+                        <p className="text-sm font-semibold">Chưa có chuyến xe nào đang chạy.</p>
+                        <p className="text-xs">
+                          {driverState.availabilityStatus === 'AVAILABLE'
+                            ? 'Đang trực tuyến chờ điều phối cuốc mới trong bán kính 3km...'
+                            : 'Bật Online để nhận cuốc xe từ khách hàng.'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* KYC Verification Card */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-3">
+                    <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                      <span className="p-1 bg-blue-100 text-blue-700 rounded">📋</span>
+                      Hồ Sơ & Xác Minh Giấy Tờ (KYC TBD-11)
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {[
+                        { title: 'CCCD Gắn Chip', number: '001201019921', status: 'APPROVED' },
+                        { title: 'Bằng Lái Xe (A1/A2)', number: 'B2-99120381', status: 'APPROVED' },
+                        { title: 'Đăng Ký Xe Máy', number: 'ĐK-29B1-88899', status: 'APPROVED' }
+                      ].map((doc, idx) => (
+                        <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
+                          <div className="flex justify-between items-center">
+                            <span className="font-bold text-slate-800">{doc.title}</span>
+                            <StateBadge status={doc.status} />
+                          </div>
+                          <span className="font-mono text-slate-500 block">Số: {doc.number}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Column: Driver Wallet Dashboard (4 cols) */}
+                <div className="lg:col-span-4 space-y-6">
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+                    <h3 className="text-base font-bold text-slate-800 flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <span className="p-1 bg-emerald-100 text-emerald-700 rounded">💰</span>
+                        Ví Thu Nhập Tài Xế
+                      </span>
+                      <span className="text-[10px] bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded border border-emerald-200">
+                        80% Net (TBD-10)
+                      </span>
+                    </h3>
+
+                    {/* Balance */}
+                    <div className="p-4 bg-gradient-to-br from-emerald-600 to-teal-700 text-white rounded-2xl shadow-lg">
+                      <span className="text-xs text-emerald-100 block">Số dư khả dụng (Ledger)</span>
+                      <span className="text-2xl font-black block mt-1 tracking-tight">
+                        {formatVND(driverWallet.balance)}
+                      </span>
+                      <div className="flex justify-between items-center text-[11px] text-emerald-100 pt-3 mt-3 border-t border-white/20">
+                        <span>Rút tối thiểu: 100.000 VNĐ</span>
+                        <button
+                          onClick={() => alert('Đã gửi yêu cầu rút tiền về STK ngân hàng đối tác!')}
+                          className="px-2.5 py-1 bg-white text-emerald-800 font-bold rounded-lg hover:bg-emerald-50"
+                        >
+                          Rút Tiền
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Ledger Entries */}
+                    <div>
+                      <span className="text-xs font-bold text-slate-700 block mb-2">
+                        Sổ Cái Biến Động Số Dư (Immutable Ledger)
+                      </span>
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {driverWallet.entries.map((e) => (
+                          <div key={e.id} className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 text-xs flex justify-between items-center">
+                            <div>
+                              <span className="font-semibold text-slate-800 block">{e.desc}</span>
+                              <span className="text-[10px] text-slate-400 font-mono">{e.ref} • {e.time}</span>
+                            </div>
+                            <span className={`font-bold font-mono ${e.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {e.amount > 0 ? `+${formatVND(e.amount)}` : formatVND(e.amount)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Incoming Offer Countdown Modal */}
+              {incomingOffer && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+                  <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-amber-200">
+                    <div className="bg-gradient-to-r from-amber-500 to-orange-600 p-4 text-white relative">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold uppercase bg-white/20 px-2 py-0.5 rounded">
+                          {incomingOffer.serviceType}
+                        </span>
+                        <span className="font-mono text-sm font-bold bg-white text-orange-600 px-2.5 py-0.5 rounded-full">
+                          ⏱️ {offerSeconds}s
+                        </span>
+                      </div>
+                      <h2 className="text-xl font-extrabold mt-1">CÓ CUỐC XE MỚI!</h2>
+                      <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/20">
+                        <div
+                          className="h-full bg-yellow-300 transition-all duration-1000 ease-linear"
+                          style={{ width: `${(offerSeconds / 15) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="p-5 space-y-4 text-xs">
+                      <div className="flex justify-between items-baseline bg-slate-50 p-3 rounded-xl border border-slate-200">
+                        <div>
+                          <span className="text-slate-500 block">Thu nhập ròng (80%)</span>
+                          <span className="text-xl font-black text-emerald-600">{formatVND(incomingOffer.estimatedEarnings)}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-slate-500 block">Khoảng cách đón</span>
+                          <strong className="text-sm font-bold text-slate-800">{incomingOffer.distanceToPickupKm} km</strong>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div><strong>Điểm đón:</strong> {incomingOffer.pickupAddress}</div>
+                        <div><strong>Điểm trả:</strong> {incomingOffer.dropoffAddress}</div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 pt-2">
+                        <button
+                          onClick={handleRejectOffer}
+                          className="py-3 border border-slate-300 rounded-xl text-slate-700 font-semibold hover:bg-slate-50"
+                        >
+                          Từ chối
+                        </button>
+                        <button
+                          onClick={handleAcceptOffer}
+                          className="py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/30"
+                        >
+                          NHẬN CUỐC (LOCK)
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </main>
+          )}
+
+          {/* PORTAL VIEW 3: ADMIN & OPERATIONS APP */}
+          {currentPortal === 'admin' && (
+            <main className="max-w-7xl w-full mx-auto p-6 space-y-6 flex-1">
+              <div className="flex justify-between items-center border-b pb-4">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800">Bảng Điều Khiển Quản Trị & Vận Hành (Admin & Ops)</h2>
+                  <p className="text-xs text-slate-500">Giám sát điều phối, kiểm duyệt đối tác, cấu hình ma trận bảng giá & audit log</p>
+                </div>
+                <span className="text-xs bg-purple-100 text-purple-800 font-bold px-3 py-1 rounded-full">
+                  ROLE_ADMIN
+                </span>
+              </div>
+
+              {/* Admin Cards Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Driver KYC Review */}
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+                  <h3 className="text-sm font-bold text-slate-800 flex items-center justify-between">
+                    <span>Kiểm Duyệt Hồ Sơ Đối Tác (KYC TBD-11)</span>
+                    <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold">1 Đã Duyệt</span>
+                  </h3>
+                  <div className="space-y-3 text-xs">
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
+                      <div>
+                        <strong className="text-slate-900 block">{driverState.name} ({driverState.vehiclePlate})</strong>
+                        <span className="text-slate-500 font-mono">GPLX: {driverState.license} • CCCD: 001201019921</span>
+                      </div>
+                      <StateBadge status={driverState.reviewStatus} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pricing Rules */}
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+                  <h3 className="text-sm font-bold text-slate-800">Cấu Hình Bảng Giá & Surge (TBD-03, TBD-04)</h3>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                      <strong className="text-slate-800 block">Xe Máy (MOTORBIKE)</strong>
+                      <div>Mở cửa: 12.000đ/1km</div>
+                      <div>Km tiếp theo: 5.000đ/km</div>
+                      <div>Surge trần: 2.50x</div>
+                    </div>
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                      <strong className="text-slate-800 block">Ô Tô 4 Chỗ (CAR_4)</strong>
+                      <div>Mở cửa: 20.000đ/1km</div>
+                      <div>Km tiếp theo: 10.000đ/km</div>
+                      <div>Surge trần: 2.50x</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Audit Logs Table */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-bold text-slate-800">
+                    Nhật Ký Kiểm Toán Bất Biến (Immutable Audit Records)
+                  </h3>
+                  <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">
+                    Retention: 5 Years (TBD-12)
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {auditRecords.map((aud) => (
+                    <div key={aud.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1 font-mono">
+                      <div className="flex justify-between text-slate-500">
+                        <span><strong>{aud.actor}</strong> &rarr; <span className="text-slate-900 font-bold">{aud.action}</span></span>
+                        <span>{aud.time}</span>
+                      </div>
+                      <div className="text-blue-700 bg-white p-2 rounded border border-slate-200">
+                        {aud.delta}
+                      </div>
+                      <div className="text-[10px] text-slate-400">Correlation ID: {aud.correlationId}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </main>
+          )}
+
+          {/* Platform Footer */}
+          <footer className="bg-white border-t border-slate-200 py-3 text-center text-xs text-slate-500">
+            <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center gap-2">
+              <span>Hệ thống Đặt xe và Giao hàng theo yêu cầu trong thời gian thực (SRS-RHL-002)</span>
+              <span className="font-mono text-[11px] text-slate-400">PostgreSQL • Redis GEO • Apache Kafka • Eureka • Spring Cloud Gateway</span>
+            </div>
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
